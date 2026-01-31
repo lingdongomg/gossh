@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 	"gossh/internal/config"
@@ -604,14 +605,26 @@ func runExec(args []string) error {
 
 func unlockIfNeeded(cfg *config.Manager) error {
 	if !cfg.IsFirstRun() && !cfg.IsUnlocked() {
-		fmt.Print("Enter master password: ")
-		var password string
-		fmt.Scanln(&password)
+		password, err := readPassword("Enter master password: ")
+		if err != nil {
+			return err
+		}
 		if err := cfg.Unlock(password); err != nil {
 			return fmt.Errorf("failed to unlock: %w", err)
 		}
 	}
 	return nil
+}
+
+// readPassword reads a password from stdin without echoing it
+func readPassword(prompt string) (string, error) {
+	fmt.Print(prompt)
+	bytePassword, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	fmt.Println() // Print newline after password input
+	return string(bytePassword), nil
 }
 
 func findConnection(connections []model.Connection, name string) *model.Connection {
