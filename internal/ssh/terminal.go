@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"syscall"
+	"runtime"
 
 	"golang.org/x/term"
 	"gossh/internal/model"
@@ -46,10 +46,10 @@ func (t *Terminal) Run() error {
 		return fmt.Errorf("stdin is not a terminal")
 	}
 
-	// Get terminal size
-	width, height, err := term.GetSize(fd)
-	if err != nil {
-		return fmt.Errorf("failed to get terminal size: %w", err)
+	// Get terminal size (use defaults if unavailable)
+	width, height := 80, 24
+	if w, h, err := term.GetSize(fd); err == nil {
+		width, height = w, h
 	}
 
 	// Request PTY
@@ -73,18 +73,20 @@ func (t *Terminal) Run() error {
 	session.SetStdout(os.Stdout)
 	session.SetStderr(os.Stderr)
 
-	// Handle window resize
-	sigwinch := make(chan os.Signal, 1)
-	signal.Notify(sigwinch, syscall.SIGWINCH)
-	defer signal.Stop(sigwinch)
+	// Handle window resize (only on Unix-like systems)
+	if runtime.GOOS != "windows" {
+		sigwinch := make(chan os.Signal, 1)
+		signal.Notify(sigwinch, os.Interrupt) // Fallback signal
+		defer signal.Stop(sigwinch)
 
-	go func() {
-		for range sigwinch {
-			if w, h, err := term.GetSize(fd); err == nil {
-				session.WindowChange(h, w)
+		go func() {
+			for range sigwinch {
+				if w, h, err := term.GetSize(fd); err == nil {
+					session.WindowChange(h, w)
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	// Start shell
 	if err := session.Shell(); err != nil {

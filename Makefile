@@ -19,13 +19,22 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 # Output directory
 OUT_DIR := bin
 
+# Detect OS for correct binary extension
+ifeq ($(OS),Windows_NT)
+    BINARY_EXT := .exe
+else
+    BINARY_EXT :=
+endif
+
+BINARY_NAME := $(APP_NAME)$(BINARY_EXT)
+
 # Default target
 all: build
 
 # Build the application
 build:
 	@mkdir -p $(OUT_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(OUT_DIR)/$(APP_NAME) .
+	$(GOBUILD) $(LDFLAGS) -o $(OUT_DIR)/$(BINARY_NAME) .
 
 # Run the application
 run:
@@ -47,7 +56,7 @@ test:
 
 # Install the application to GOPATH/bin
 install:
-	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(APP_NAME) .
+	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) .
 
 # Build for multiple platforms
 build-all: build-linux build-darwin build-windows
