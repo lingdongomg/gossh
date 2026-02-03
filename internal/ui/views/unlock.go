@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"gossh/internal/i18n"
 	"gossh/internal/ui/styles"
 )
 
@@ -84,19 +85,19 @@ func (m UnlockModel) Update(msg tea.Msg) (UnlockModel, tea.Cmd) {
 func (m UnlockModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styles.TitleStyle.Render("GoSSH Locked"))
+	b.WriteString(styles.TitleStyle.Render(i18n.T("unlock.title")))
 	b.WriteString("\n\n")
 
-	b.WriteString("Enter master password to unlock:\n\n")
+	b.WriteString(i18n.T("unlock.prompt") + "\n\n")
 
-	b.WriteString(styles.LabelStyle.Render("Password:") + "\n")
+	b.WriteString(styles.LabelStyle.Render(i18n.T("unlock.label")) + "\n")
 	b.WriteString(m.password.View())
 	b.WriteString("\n\n")
 
 	// Attempt counter
 	remaining := maxUnlockAttempts - m.attempts
 	if m.attempts > 0 {
-		attemptStr := fmt.Sprintf("[Attempt %d/%d]", m.attempts, maxUnlockAttempts)
+		attemptStr := fmt.Sprintf(i18n.T("unlock.attempt"), m.attempts, maxUnlockAttempts)
 		if remaining <= 1 {
 			b.WriteString(styles.ErrorStyle.Render(attemptStr))
 		} else {
@@ -108,13 +109,13 @@ func (m UnlockModel) View() string {
 	// Error message
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(styles.ErrorStyle.Render("Error: " + m.err.Error()))
+		b.WriteString(styles.ErrorStyle.Render(i18n.T("common.error") + ": " + m.err.Error()))
 		b.WriteString("\n")
 	}
 
 	// Help
 	b.WriteString("\n")
-	help := styles.HelpStyle.Render("enter:unlock  esc:exit")
+	help := styles.HelpStyle.Render(i18n.T("unlock.help"))
 	b.WriteString(help)
 
 	return b.String()

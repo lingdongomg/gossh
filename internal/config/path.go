@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	appName    = "gossh"
-	configFile = "config.yaml"
+	appName        = "gossh"
+	configFile     = "config.yaml"
+	knownHostsFile = "known_hosts"
 )
 
 // ConfigDir returns the configuration directory path
@@ -42,6 +43,16 @@ func ConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, configFile), nil
+}
+
+// GetKnownHostsPath returns the path to the known_hosts file
+func GetKnownHostsPath() string {
+	dir, err := ConfigDir()
+	if err != nil {
+		// Fallback to current directory
+		return knownHostsFile
+	}
+	return filepath.Join(dir, knownHostsFile)
 }
 
 // EnsureConfigDir creates the config directory if it doesn't exist

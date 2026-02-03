@@ -63,14 +63,15 @@ func (pf *PortForward) String() string {
 
 // Forwarder manages port forwarding
 type Forwarder struct {
-	conn     model.Connection
-	client   *ssh.Client
-	forwards []*PortForward
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	running  bool
+	conn            model.Connection
+	client          *ssh.Client
+	forwards        []*PortForward
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	mu              sync.Mutex
+	running         bool
+	hostKeyCallback ssh.HostKeyCallback
 }
 
 // NewForwarder creates a new port forwarder
@@ -84,6 +85,11 @@ func NewForwarder(conn model.Connection) *Forwarder {
 	}
 }
 
+// SetHostKeyCallback sets the host key callback for verification
+func (f *Forwarder) SetHostKeyCallback(callback ssh.HostKeyCallback) {
+	f.hostKeyCallback = callback
+}
+
 // AddForward adds a port forward rule
 func (f *Forwarder) AddForward(pf *PortForward) {
 	f.mu.Lock()
@@ -91,25 +97,12 @@ func (f *Forwarder) AddForward(pf *PortForward) {
 	f.forwards = append(f.forwards, pf)
 }
 
-// Connect establishes the SSH connection
+// Connect establishes the SSH connection using the factory function
 func (f *Forwarder) Connect() error {
-	authMethods, err := BuildAuthMethods(f.conn)
+	client, err := ConnectWithConnection(f.conn, f.hostKeyCallback)
 	if err != nil {
-		return fmt.Errorf("failed to build auth methods: %w", err)
+		return err
 	}
-
-	config := &ssh.ClientConfig{
-		User:            f.conn.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	addr := fmt.Sprintf("%s:%d", f.conn.Host, f.conn.Port)
-	client, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return fmt.Errorf("failed to dial: %w", err)
-	}
-
 	f.client = client
 	return nil
 }
@@ -221,7 +214,7 @@ func (f *Forwarder) startRemoteForward(pf *PortForward) error {
 				}
 			}
 
-			localAddr := fmt.Sprintf("%s:%d", pf.LocalHost, pf.LocalPort)
+			localAddr := net.JoinHostPort(pf.LocalHost, fmt.Sprintf("%d", pf.LocalPort))
 			f.wg.Add(1)
 			go func(remoteConn net.Conn) {
 				defer f.wg.Done()
@@ -249,12 +242,12 @@ func (f *Forwarder) copyBidirectional(conn1, conn2 net.Conn) {
 
 	go func() {
 		defer wg.Done()
-		io.Copy(conn1, conn2)
+		_, _ = io.Copy(conn1, conn2)
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(conn2, conn1)
+		_, _ = io.Copy(conn2, conn1)
 	}()
 
 	wg.Wait()

@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"gossh/internal/i18n"
 	"gossh/internal/model"
 	"gossh/internal/ui/styles"
 )
@@ -222,7 +223,7 @@ func (m ListModel) View() string {
 	var b strings.Builder
 
 	// Title
-	title := styles.TitleStyle.Render("SSH Connections")
+	title := styles.TitleStyle.Render(i18n.T("list.title"))
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
@@ -231,15 +232,15 @@ func (m ListModel) View() string {
 		b.WriteString(m.searchInput.View())
 		b.WriteString("\n\n")
 	} else if m.searchQuery != "" {
-		b.WriteString(styles.DimStyle.Render(fmt.Sprintf("Filter: %s (press / to search, esc to clear)", m.searchQuery)))
+		b.WriteString(styles.DimStyle.Render(fmt.Sprintf(i18n.T("list.filter"), m.searchQuery)))
 		b.WriteString("\n\n")
 	}
 
 	if len(m.filtered) == 0 {
 		if m.searchQuery != "" {
-			b.WriteString(styles.DimStyle.Render("No matching connections."))
+			b.WriteString(styles.DimStyle.Render(i18n.T("list.empty.search")))
 		} else {
-			b.WriteString(styles.DimStyle.Render("No connections yet. Press 'a' to add one."))
+			b.WriteString(styles.DimStyle.Render(i18n.T("list.empty")))
 		}
 		b.WriteString("\n")
 	} else if m.groupView {
@@ -249,7 +250,7 @@ func (m ListModel) View() string {
 		for _, conn := range m.filtered {
 			group := conn.Group
 			if group == "" {
-				group = "Ungrouped"
+				group = i18n.T("list.ungrouped")
 			}
 			if _, exists := groups[group]; !exists {
 				groupOrder = append(groupOrder, group)
@@ -283,9 +284,9 @@ func (m ListModel) View() string {
 	}
 
 	// Stats
-	b.WriteString(styles.DimStyle.Render(fmt.Sprintf("Total: %d connections", len(m.connections))))
+	b.WriteString(styles.DimStyle.Render(fmt.Sprintf(i18n.T("list.total"), len(m.connections))))
 	if m.searchQuery != "" {
-		b.WriteString(styles.DimStyle.Render(fmt.Sprintf(" (showing %d)", len(m.filtered))))
+		b.WriteString(styles.DimStyle.Render(fmt.Sprintf(i18n.T("list.showing"), len(m.filtered))))
 	}
 	b.WriteString("\n")
 
@@ -293,9 +294,9 @@ func (m ListModel) View() string {
 	b.WriteString("\n")
 	var help string
 	if m.searching {
-		help = styles.HelpStyle.Render("type to search  enter:confirm  esc:cancel")
+		help = styles.HelpStyle.Render(i18n.T("list.help.search"))
 	} else {
-		help = styles.HelpStyle.Render("a:add  e:edit  d:delete  /:search  enter:connect  ?:help  q:quit")
+		help = styles.HelpStyle.Render(i18n.T("list.help"))
 	}
 	b.WriteString(help)
 

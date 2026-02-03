@@ -30,7 +30,8 @@ type Connection struct {
 	Host                   string     `yaml:"host"`
 	Port                   int        `yaml:"port"`
 	User                   string     `yaml:"user"`
-	AuthMethod             AuthType   `yaml:"auth_method"`
+	AuthType               AuthType   `yaml:"auth_type"`
+	AuthMethod             AuthType   `yaml:"auth_method"` // Deprecated: use AuthType
 	Password               string     `yaml:"password,omitempty"`               // Plain text (for runtime use)
 	EncryptedPassword      string     `yaml:"encrypted_password,omitempty"`      // AES-256-GCM encrypted
 	KeyPath                string     `yaml:"key_path,omitempty"`
@@ -41,6 +42,7 @@ type Connection struct {
 	StartupCommand         string     `yaml:"startup_command,omitempty"`
 	LastConnected          *time.Time `yaml:"last_connected,omitempty"`
 	LastStatus             ConnStatus `yaml:"last_status"`
+	HealthStatus           ConnStatus `yaml:"health_status,omitempty"` // For health check results
 	CreatedAt              time.Time  `yaml:"created_at"`
 	UpdatedAt              time.Time  `yaml:"updated_at"`
 }
@@ -111,25 +113,36 @@ type Group struct {
 
 // Settings represents application settings
 type Settings struct {
-	MasterPasswordHash string `yaml:"master_password_hash,omitempty"`
-	EncryptionSalt     string `yaml:"encryption_salt,omitempty"`
-	ConnectionTimeout  int    `yaml:"connection_timeout"`
-	DefaultPort        int    `yaml:"default_port"`
-	Theme              string `yaml:"theme"`
+	MasterPasswordHash        string `yaml:"master_password_hash,omitempty"`
+	EncryptionSalt            string `yaml:"encryption_salt,omitempty"`
+	PasswordProtectionEnabled bool   `yaml:"password_protection_enabled"`
+	Initialized               bool   `yaml:"initialized"` // True after first-time setup
+	ConnectionTimeout         int    `yaml:"connection_timeout"`
+	DefaultPort               int    `yaml:"default_port"`
+	Theme                     string `yaml:"theme"`
+	Language                  string `yaml:"language,omitempty"` // "en" or "zh"
 }
 
 // NewSettings creates default settings
 func NewSettings() Settings {
 	return Settings{
-		ConnectionTimeout: 10,
-		DefaultPort:       22,
-		Theme:             "dark",
+		PasswordProtectionEnabled: false,
+		Initialized:               false,
+		ConnectionTimeout:         10,
+		DefaultPort:               22,
+		Theme:                     "dark",
+		Language:                  "en",
 	}
 }
 
 // IsPasswordSet returns true if master password has been set
 func (s *Settings) IsPasswordSet() bool {
 	return s.MasterPasswordHash != ""
+}
+
+// NeedsUnlock returns true if password protection is enabled and password is set
+func (s *Settings) NeedsUnlock() bool {
+	return s.PasswordProtectionEnabled && s.MasterPasswordHash != ""
 }
 
 // Config represents the application configuration

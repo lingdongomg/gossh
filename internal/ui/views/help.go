@@ -1,21 +1,31 @@
 package views
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"gossh/internal/i18n"
 	"gossh/internal/ui/styles"
 )
 
 // HelpModel is the help screen
 type HelpModel struct {
-	width  int
-	height int
+	width   int
+	height  int
+	version string
 }
 
 // NewHelpModel creates a new help model
 func NewHelpModel() HelpModel {
-	return HelpModel{}
+	return HelpModel{
+		version: "1.2.0", // default version
+	}
+}
+
+// SetVersion sets the version to display
+func (m *HelpModel) SetVersion(version string) {
+	m.version = version
 }
 
 // SetSize sets the view dimensions
@@ -38,7 +48,7 @@ func (m HelpModel) Update(msg tea.Msg) (HelpModel, tea.Cmd) {
 func (m HelpModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styles.TitleStyle.Render("GoSSH Help - v1.0"))
+	b.WriteString(styles.TitleStyle.Render(fmt.Sprintf("%s - v%s", i18n.T("help.title"), m.version)))
 	b.WriteString("\n\n")
 
 	sections := []struct {
@@ -49,75 +59,81 @@ func (m HelpModel) View() string {
 		}
 	}{
 		{
-			title: "Navigation",
+			title: i18n.T("help.navigation"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"up/k", "Move up"},
-				{"down/j", "Move down"},
-				{"g", "Jump to top"},
-				{"G", "Jump to bottom"},
-				{"/", "Search connections"},
-				{"Enter", "Connect to selected server"},
+				{"up/k", i18n.T("help.key.up")},
+				{"down/j", i18n.T("help.key.down")},
+				{"g", i18n.T("help.key.top")},
+				{"G", i18n.T("help.key.bottom")},
+				{"/", i18n.T("help.key.search")},
+				{"Enter", i18n.T("help.key.connect")},
 			},
 		},
 		{
-			title: "Connection Management",
+			title: i18n.T("help.connection"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"a", "Add new connection"},
-				{"e", "Edit selected connection"},
-				{"d", "Delete selected connection"},
+				{"a", i18n.T("help.key.add")},
+				{"e", i18n.T("help.key.edit")},
+				{"d", i18n.T("help.key.delete")},
+				{"t", i18n.T("help.key.test")},
 			},
 		},
 		{
-			title: "Form Navigation",
+			title: i18n.T("help.form"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"Tab", "Next field"},
-				{"Shift+Tab", "Previous field"},
-				{"Space", "Toggle auth method / Cycle group"},
-				{"Enter", "Save"},
-				{"Esc", "Cancel"},
+				{"Tab", i18n.T("help.key.tab")},
+				{"Shift+Tab", i18n.T("help.key.shifttab")},
+				{"Space", i18n.T("help.key.space")},
+				{"Enter", i18n.T("help.key.save")},
+				{"Esc", i18n.T("help.key.cancel")},
 			},
 		},
 		{
-			title: "Search Mode",
+			title: i18n.T("help.search"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"Type", "Filter by name, host, user, group, or tags"},
-				{"Enter", "Confirm search and connect"},
-				{"Esc", "Cancel search"},
+				{"Type", i18n.T("help.key.type")},
+				{"Enter", i18n.T("help.key.confirm")},
+				{"Esc", i18n.T("help.key.cancel")},
 			},
 		},
 		{
-			title: "General",
+			title: i18n.T("help.general"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"?", "Show this help"},
-				{"q", "Quit application"},
-				{"Esc", "Go back / Cancel"},
+				{"s", i18n.T("help.key.settings")},
+				{"?", i18n.T("help.key.help")},
+				{"q", i18n.T("help.key.quit")},
+				{"Esc", i18n.T("help.key.back")},
 			},
 		},
 		{
-			title: "CLI Commands",
+			title: i18n.T("help.cli"),
 			keys: []struct {
 				key  string
 				desc string
 			}{
-				{"gossh list", "List all connections"},
-				{"gossh connect <name>", "Connect by name"},
-				{"gossh export [file]", "Export connections"},
-				{"gossh import <file>", "Import connections"},
+				{"gossh list", i18n.T("help.cli.list")},
+				{"gossh connect <name>", i18n.T("help.cli.connect")},
+				{"gossh export [file]", i18n.T("help.cli.export")},
+				{"gossh import <file>", i18n.T("help.cli.import")},
+				{"gossh check", i18n.T("help.cli.check")},
+				{"gossh sftp <name>", i18n.T("help.cli.sftp")},
+				{"gossh forward <name>", i18n.T("help.cli.forward")},
+				{"gossh exec <cmd>", i18n.T("help.cli.exec")},
 			},
 		},
 	}
@@ -135,7 +151,7 @@ func (m HelpModel) View() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(styles.HelpStyle.Render("Press Esc or ? to return"))
+	b.WriteString(styles.HelpStyle.Render(i18n.T("help.return")))
 
 	return b.String()
 }

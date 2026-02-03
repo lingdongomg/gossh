@@ -15,9 +15,11 @@ import (
 
 // Client wraps an SFTP client
 type Client struct {
-	conn       model.Connection
-	sshClient  *ssh.Client
-	sftpClient *sftp.Client
+	conn            model.Connection
+	sshClient       *ssh.Client
+	sftpClient      *sftp.Client
+	currentDir      string // Track current working directory
+	hostKeyCallback ssh.HostKeyCallback
 }
 
 // NewClient creates a new SFTP client for a connection
@@ -25,24 +27,16 @@ func NewClient(conn model.Connection) *Client {
 	return &Client{conn: conn}
 }
 
-// Connect establishes the SFTP connection
+// SetHostKeyCallback sets the host key callback for verification
+func (c *Client) SetHostKeyCallback(callback ssh.HostKeyCallback) {
+	c.hostKeyCallback = callback
+}
+
+// Connect establishes the SFTP connection using the factory function
 func (c *Client) Connect() error {
-	// Build SSH auth methods
-	authMethods, err := gossh.BuildAuthMethods(c.conn)
+	sshClient, err := gossh.ConnectWithConnection(c.conn, c.hostKeyCallback)
 	if err != nil {
-		return fmt.Errorf("failed to build auth methods: %w", err)
-	}
-
-	config := &ssh.ClientConfig{
-		User:            c.conn.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	addr := fmt.Sprintf("%s:%d", c.conn.Host, c.conn.Port)
-	sshClient, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return fmt.Errorf("failed to dial: %w", err)
+		return err
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient)
@@ -53,6 +47,10 @@ func (c *Client) Connect() error {
 
 	c.sshClient = sshClient
 	c.sftpClient = sftpClient
+
+	// Initialize current directory
+	c.currentDir, _ = c.sftpClient.Getwd()
+
 	return nil
 }
 
@@ -230,7 +228,193 @@ func (c *Client) Stat(remotePath string) (*FileInfo, error) {
 
 // Pwd returns the current working directory
 func (c *Client) Pwd() (string, error) {
+	if c.currentDir != "" {
+		return c.currentDir, nil
+	}
 	return c.sftpClient.Getwd()
+}
+
+// Cd changes the current working directory
+func (c *Client) Cd(path string) error {
+	// Resolve path
+	newPath := c.resolvePath(path)
+
+	// Verify it exists and is a directory
+	info, err := c.sftpClient.Stat(newPath)
+	if err != nil {
+		return fmt.Errorf("failed to access directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("not a directory: %s", newPath)
+	}
+
+	c.currentDir = newPath
+	return nil
+}
+
+// CurrentDir returns the current working directory
+func (c *Client) CurrentDir() string {
+	return c.currentDir
+}
+
+// resolvePath resolves a path relative to the current directory
+func (c *Client) resolvePath(path string) string {
+	if path == "" {
+		return c.currentDir
+	}
+	// Absolute path
+	if strings.HasPrefix(path, "/") {
+		return filepath.Clean(path)
+	}
+	// Handle ~ for home directory
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		// On remote, ~ typically resolves to user's home
+		home, err := c.sftpClient.Getwd()
+		if err == nil && path == "~" {
+			return home
+		}
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	// Relative path
+	return filepath.Clean(filepath.Join(c.currentDir, path))
+}
+
+// ProgressCallback is called during file transfer to report progress
+type ProgressCallback func(transferred, total int64)
+
+// UploadWithProgress uploads a local file to the remote server with progress reporting
+func (c *Client) UploadWithProgress(localPath, remotePath string, progress ProgressCallback) error {
+	// Expand local path
+	localPath = expandPath(localPath)
+	// Resolve remote path
+	remotePath = c.resolvePath(remotePath)
+
+	// Open local file
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file: %w", err)
+	}
+	defer localFile.Close()
+
+	// Get local file info for permissions and size
+	localInfo, err := localFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat local file: %w", err)
+	}
+
+	// Create remote file
+	remoteFile, err := c.sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file: %w", err)
+	}
+	defer remoteFile.Close()
+
+	// Copy content with progress
+	var transferred int64
+	total := localInfo.Size()
+	buf := make([]byte, 32*1024) // 32KB buffer
+
+	for {
+		n, err := localFile.Read(buf)
+		if n > 0 {
+			written, writeErr := remoteFile.Write(buf[:n])
+			if writeErr != nil {
+				return fmt.Errorf("failed to write: %w", writeErr)
+			}
+			transferred += int64(written)
+			if progress != nil {
+				progress(transferred, total)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read: %w", err)
+		}
+	}
+
+	// Set permissions
+	err = c.sftpClient.Chmod(remotePath, localInfo.Mode())
+	if err != nil {
+		fmt.Printf("Warning: failed to set permissions: %v\n", err)
+	}
+
+	return nil
+}
+
+// DownloadWithProgress downloads a remote file to the local machine with progress reporting
+func (c *Client) DownloadWithProgress(remotePath, localPath string, progress ProgressCallback) error {
+	// Expand local path
+	localPath = expandPath(localPath)
+	// Resolve remote path
+	remotePath = c.resolvePath(remotePath)
+
+	// Open remote file
+	remoteFile, err := c.sftpClient.Open(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to open remote file: %w", err)
+	}
+	defer remoteFile.Close()
+
+	// Get remote file info
+	remoteInfo, err := remoteFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat remote file: %w", err)
+	}
+
+	// Create local directory if needed
+	localDir := filepath.Dir(localPath)
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory: %w", err)
+	}
+
+	// Create local file
+	localFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer localFile.Close()
+
+	// Copy content with progress
+	var transferred int64
+	total := remoteInfo.Size()
+	buf := make([]byte, 32*1024) // 32KB buffer
+
+	for {
+		n, err := remoteFile.Read(buf)
+		if n > 0 {
+			written, writeErr := localFile.Write(buf[:n])
+			if writeErr != nil {
+				return fmt.Errorf("failed to write: %w", writeErr)
+			}
+			transferred += int64(written)
+			if progress != nil {
+				progress(transferred, total)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read: %w", err)
+		}
+	}
+
+	// Set permissions
+	err = os.Chmod(localPath, remoteInfo.Mode())
+	if err != nil {
+		fmt.Printf("Warning: failed to set permissions: %v\n", err)
+	}
+
+	return nil
+}
+
+// ListCurrentDir lists files in the current working directory
+func (c *Client) ListCurrentDir() ([]FileInfo, error) {
+	return c.List(c.currentDir)
 }
 
 // FileInfo represents file information

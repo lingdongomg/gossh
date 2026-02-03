@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"gossh/internal/i18n"
 	"gossh/internal/ui/styles"
 )
 
@@ -104,19 +105,19 @@ func (m ConfirmModel) View() string {
 	b.WriteString("\n\n")
 
 	// Buttons
-	noBtn := styles.ButtonStyle.Render("[ No ]")
-	yesBtn := styles.ButtonStyle.Render("[ Yes ]")
+	noBtn := styles.ButtonStyle.Render("[ " + i18n.T("confirm.no") + " ]")
+	yesBtn := styles.ButtonStyle.Render("[ " + i18n.T("confirm.yes") + " ]")
 
 	if m.selected == 0 {
-		noBtn = styles.ActiveButtonStyle.Render("[ No ]")
+		noBtn = styles.ActiveButtonStyle.Render("[ " + i18n.T("confirm.no") + " ]")
 	} else {
-		yesBtn = styles.ActiveButtonStyle.Render("[ Yes ]")
+		yesBtn = styles.ActiveButtonStyle.Render("[ " + i18n.T("confirm.yes") + " ]")
 	}
 
 	b.WriteString(noBtn + "  " + yesBtn)
 	b.WriteString("\n\n")
 
-	help := styles.HelpStyle.Render("y:yes  n:no  tab:toggle  enter:confirm  esc:cancel")
+	help := styles.HelpStyle.Render(i18n.T("confirm.help"))
 	b.WriteString(help)
 
 	return styles.DialogStyle.Render(b.String())

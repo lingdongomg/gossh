@@ -3,10 +3,12 @@ package ui
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"gossh/internal/config"
+	"gossh/internal/i18n"
 	"gossh/internal/model"
 	"gossh/internal/ssh"
 	"gossh/internal/ui/styles"
@@ -24,22 +26,27 @@ const (
 	ViewConfirm
 	ViewHelp
 	ViewConnecting
+	ViewSettings
+	ViewHostKey
+	ViewTesting
 )
 
 // KeyMap defines the key bindings for the application
 type KeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Enter   key.Binding
-	Add     key.Binding
-	Edit    key.Binding
-	Delete  key.Binding
-	Help    key.Binding
-	Quit    key.Binding
-	Back    key.Binding
-	Search  key.Binding
-	Confirm key.Binding
-	Cancel  key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Enter    key.Binding
+	Add      key.Binding
+	Edit     key.Binding
+	Delete   key.Binding
+	Help     key.Binding
+	Quit     key.Binding
+	Back     key.Binding
+	Search   key.Binding
+	Confirm  key.Binding
+	Cancel   key.Binding
+	Settings key.Binding
+	Test     key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -92,6 +99,14 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("n"),
 		key.WithHelp("n", "cancel"),
 	),
+	Settings: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "settings"),
+	),
+	Test: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "test"),
+	),
 }
 
 // Model is the main Bubbletea model
@@ -103,6 +118,8 @@ type Model struct {
 	form      views.FormModel
 	confirm   views.ConfirmModel
 	help      views.HelpModel
+	settings  views.SettingsModel
+	hostkey   views.HostKeyModel
 	config    *config.Manager
 	keys      KeyMap
 	width     int
@@ -111,32 +128,46 @@ type Model struct {
 	statusMsg string
 	deleteID  string
 	sshConn   model.Connection
+	version   string
 }
 
 // NewModel creates a new app model
 func NewModel(cfg *config.Manager) Model {
 	m := Model{
-		setup:   views.NewSetupModel(),
-		unlock:  views.NewUnlockModel(),
-		list:    views.NewListModel(),
-		form:    views.NewFormModel(cfg.GroupNames()),
-		confirm: views.NewConfirmModel(),
-		help:    views.NewHelpModel(),
-		config:  cfg,
-		keys:    DefaultKeyMap,
+		setup:    views.NewSetupModel(),
+		unlock:   views.NewUnlockModel(),
+		list:     views.NewListModel(),
+		form:     views.NewFormModel(cfg.GroupNames()),
+		confirm:  views.NewConfirmModel(),
+		help:     views.NewHelpModel(),
+		settings: views.NewSettingsModel(cfg),
+		hostkey:  views.NewHostKeyModel(),
+		config:   cfg,
+		keys:     DefaultKeyMap,
+		version:  "1.2.0",
 	}
 
 	// Determine initial state
 	if cfg.IsFirstRun() {
 		m.state = ViewSetup
 	} else if !cfg.IsUnlocked() {
+		// Password protection is enabled, need to unlock
 		m.state = ViewUnlock
 	} else {
+		// Auto-unlock if password protection is disabled
+		_ = cfg.AutoUnlockIfNeeded()
 		m.state = ViewList
 		m.list.SetConnections(cfg.Connections())
 	}
 
 	return m
+}
+
+// SetVersion sets the version to display in help
+func (m *Model) SetVersion(version string) {
+	m.version = version
+	m.help.SetVersion(version)
+	m.settings.SetVersion(version)
 }
 
 // Init initializes the model
@@ -156,6 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form.SetSize(msg.Width, msg.Height)
 		m.confirm.SetSize(msg.Width, msg.Height)
 		m.help.SetSize(msg.Width, msg.Height)
+		m.hostkey.SetSize(msg.Width, msg.Height)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -178,17 +210,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirm(msg)
 		case ViewHelp:
 			return m.updateHelp(msg)
+		case ViewSettings:
+			return m.updateSettings(msg)
+		case ViewHostKey:
+			return m.updateHostKey(msg)
 		}
 
 	case sshDoneMsg:
 		m.state = ViewList
 		if msg.err != nil {
 			m.err = msg.err
-			m.statusMsg = "Connection error: " + msg.err.Error()
-			m.config.UpdateConnectionStatus(m.sshConn.ID, model.ConnStatusFailed)
+			m.statusMsg = fmt.Sprintf(i18n.T("common.conn_error"), msg.err.Error())
+			_ = m.config.UpdateConnectionStatus(m.sshConn.ID, model.ConnStatusFailed)
 		} else {
-			m.statusMsg = "Disconnected"
-			m.config.UpdateConnectionStatus(m.sshConn.ID, model.ConnStatusSuccess)
+			m.statusMsg = i18n.T("common.disconnected")
+			_ = m.config.UpdateConnectionStatus(m.sshConn.ID, model.ConnStatusSuccess)
+		}
+		m.list.SetConnections(m.config.Connections())
+		return m, nil
+
+	case testResultMsg:
+		m.state = ViewList
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("%s: %s - %s", i18n.T("health.result.fail"), msg.conn.Name, msg.err.Error())
+			_ = m.config.UpdateConnectionStatus(msg.conn.ID, model.ConnStatusFailed)
+		} else {
+			m.statusMsg = fmt.Sprintf("%s: %s", i18n.T("health.result.success"), msg.conn.Name)
+			_ = m.config.UpdateConnectionStatus(msg.conn.ID, model.ConnStatusSuccess)
 		}
 		m.list.SetConnections(m.config.Connections())
 		return m, nil
@@ -200,9 +248,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Back):
-		return m, tea.Quit
+		if m.setup.IsChoosingMode() {
+			return m, tea.Quit
+		}
+		// Go back to mode selection
+		m.setup = views.NewSetupModel()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Enter):
+		if m.setup.IsChoosingMode() {
+			if m.setup.SkipPassword() {
+				// User chose to skip password protection
+				if err := m.config.SetupWithoutPassword(); err != nil {
+					m.err = err
+					return m, nil
+				}
+				m.state = ViewList
+				m.list.SetConnections(m.config.Connections())
+				m.statusMsg = i18n.T("setup.complete")
+				m.err = nil
+				return m, nil
+			}
+			// User chose to enable password protection, proceed to password entry
+			m.setup.ProceedToPassword()
+			return m, nil
+		}
+
+		// In password entry step
 		password, err := m.setup.GetPassword()
 		if err != nil {
 			m.err = err
@@ -216,7 +288,7 @@ func (m Model) updateSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.state = ViewList
 		m.list.SetConnections(m.config.Connections())
-		m.statusMsg = "Master password set successfully"
+		m.statusMsg = i18n.T("setup.complete")
 		m.err = nil
 		return m, nil
 
@@ -247,7 +319,7 @@ func (m Model) updateUnlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.state = ViewList
 		m.list.SetConnections(m.config.Connections())
-		m.statusMsg = "Unlocked successfully"
+		m.statusMsg = i18n.T("common.success")
 		m.err = nil
 		return m, nil
 
@@ -304,7 +376,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Delete):
 		if conn, ok := m.list.Selected(); ok {
 			m.deleteID = conn.ID
-			m.confirm.SetMessage("Delete Connection", fmt.Sprintf("Delete '%s'?", conn.Name))
+			m.confirm.SetMessage(i18n.T("confirm.delete"), fmt.Sprintf("%s '%s'?", i18n.T("confirm.delete.msg"), conn.Name))
 			m.state = ViewConfirm
 		}
 		return m, nil
@@ -319,6 +391,21 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Help):
 		m.state = ViewHelp
+		return m, nil
+
+	case key.Matches(msg, m.keys.Settings):
+		m.settings = views.NewSettingsModel(m.config)
+		m.settings.SetVersion(m.version)
+		m.state = ViewSettings
+		return m, nil
+
+	case key.Matches(msg, m.keys.Test):
+		if conn, ok := m.list.Selected(); ok {
+			m.sshConn = conn
+			m.statusMsg = fmt.Sprintf("%s: %s", i18n.T("health.testing"), conn.Name)
+			m.state = ViewTesting
+			return m, m.testConnection(conn)
+		}
 		return m, nil
 
 	default:
@@ -346,13 +433,13 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.err = err
 				return m, nil
 			}
-			m.statusMsg = "Connection updated"
+			m.statusMsg = i18n.T("settings.saved")
 		} else {
 			if err := m.config.AddConnection(conn); err != nil {
 				m.err = err
 				return m, nil
 			}
-			m.statusMsg = "Connection added"
+			m.statusMsg = i18n.T("settings.saved")
 		}
 
 		m.list.SetConnections(m.config.Connections())
@@ -378,7 +465,7 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := m.config.DeleteConnection(m.deleteID); err != nil {
 				m.err = err
 			} else {
-				m.statusMsg = "Connection deleted"
+				m.statusMsg = i18n.T("common.success")
 				m.list.SetConnections(m.config.Connections())
 			}
 		}
@@ -397,6 +484,51 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = ViewList
 	}
 	return m, nil
+}
+
+func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	settingsModel, cmd := m.settings.Update(msg)
+	if sm, ok := settingsModel.(views.SettingsModel); ok {
+		m.settings = sm
+		// Check if user wants to go back
+		if m.settings.ShouldQuit() {
+			m.state = ViewList
+			return m, nil
+		}
+	}
+	return m, cmd
+}
+
+func (m Model) updateHostKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.hostkey, cmd = m.hostkey.Update(msg)
+
+	if m.hostkey.IsCompleted() {
+		if m.hostkey.IsAccepted() {
+			// Continue with connection
+			m.state = ViewConnecting
+			return m, m.connectSSH(m.sshConn)
+		}
+		// User rejected, go back to list
+		m.state = ViewList
+		m.statusMsg = i18n.T("hostkey.reject")
+	}
+
+	return m, cmd
+}
+
+// testResultMsg is sent when connection test completes
+type testResultMsg struct {
+	conn model.Connection
+	err  error
+}
+
+func (m Model) testConnection(conn model.Connection) tea.Cmd {
+	return func() tea.Msg {
+		err := ssh.QuickCheck(conn.Host, conn.Port, 5*time.Second)
+		return testResultMsg{conn: conn, err: err}
+	}
 }
 
 // sshDoneMsg is sent when SSH session ends
@@ -440,15 +572,21 @@ func (m Model) View() string {
 		return m.confirm.View()
 	case ViewHelp:
 		return m.help.View()
+	case ViewSettings:
+		return m.settings.View()
+	case ViewHostKey:
+		return m.hostkey.View()
 	case ViewConnecting:
-		return "Connecting to " + m.sshConn.Host + "..."
+		return fmt.Sprintf(i18n.T("common.connecting"), m.sshConn.Host)
+	case ViewTesting:
+		return fmt.Sprintf("%s: %s", i18n.T("health.testing"), m.sshConn.Name)
 	default:
 		view := m.list.View()
 		if m.statusMsg != "" {
 			view += "\n" + styles.DimStyle.Render(m.statusMsg)
 		}
 		if m.err != nil {
-			view += "\n" + styles.ErrorStyle.Render("Error: "+m.err.Error())
+			view += "\n" + styles.ErrorStyle.Render(i18n.T("common.error")+": "+m.err.Error())
 		}
 		return view
 	}

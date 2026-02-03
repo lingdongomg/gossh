@@ -1,8 +1,8 @@
-.PHONY: build run clean install test
+.PHONY: build run clean install test coverage test-verbose
 
 # Application name
 APP_NAME := gossh
-VERSION := 0.1.0
+VERSION := 1.2.0
 
 # Go parameters
 GOCMD := go
@@ -54,9 +54,52 @@ deps:
 test:
 	$(GOTEST) -v ./...
 
-# Install the application to GOPATH/bin
+# Run tests with coverage
+coverage:
+	$(GOTEST) -v -coverprofile=coverage.out ./...
+	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+# Run tests with verbose output
+test-verbose:
+	$(GOTEST) -v -race ./...
+
+# Install the application
+# Priority: GOBIN > GOPATH/bin > ~/.local/bin (Linux/macOS) or ~/bin (fallback)
 install:
-	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) .
+ifeq ($(OS),Windows_NT)
+	@if defined GOBIN ( \
+		$(GOBUILD) $(LDFLAGS) -o $(GOBIN)\$(BINARY_NAME) . \
+	) else if defined GOPATH ( \
+		$(GOBUILD) $(LDFLAGS) -o $(GOPATH)\bin\$(BINARY_NAME) . \
+	) else ( \
+		$(GOBUILD) $(LDFLAGS) -o $(USERPROFILE)\go\bin\$(BINARY_NAME) . \
+	)
+	@echo "Installed to Go bin directory. Make sure it's in your PATH."
+else
+	@if [ -n "$(GOBIN)" ]; then \
+		$(GOBUILD) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME) . && \
+		echo "Installed to $(GOBIN)/$(BINARY_NAME)"; \
+	elif [ -n "$(GOPATH)" ]; then \
+		$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) . && \
+		echo "Installed to $(GOPATH)/bin/$(BINARY_NAME)"; \
+	else \
+		mkdir -p $(HOME)/.local/bin && \
+		$(GOBUILD) $(LDFLAGS) -o $(HOME)/.local/bin/$(BINARY_NAME) . && \
+		echo "Installed to $(HOME)/.local/bin/$(BINARY_NAME)"; \
+	fi
+	@echo "Make sure the install directory is in your PATH."
+endif
+
+# Install to system-wide location (requires sudo on Linux/macOS)
+install-system:
+ifeq ($(OS),Windows_NT)
+	@echo "On Windows, please run as Administrator and copy bin/$(BINARY_NAME) to a directory in PATH"
+	@echo "Common locations: C:\\Windows\\System32 or create C:\\Tools and add to PATH"
+else
+	sudo cp $(OUT_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
+	@echo "Installed to /usr/local/bin/$(BINARY_NAME)"
+endif
 
 # Build for multiple platforms
 build-all: build-linux build-darwin build-windows
@@ -85,13 +128,14 @@ lint:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  build       - Build the application"
-	@echo "  run         - Run the application"
-	@echo "  clean       - Clean build artifacts"
-	@echo "  deps        - Download and tidy dependencies"
-	@echo "  test        - Run tests"
-	@echo "  install     - Install to GOPATH/bin"
-	@echo "  build-all   - Build for all platforms"
-	@echo "  fmt         - Format code"
-	@echo "  lint        - Lint code"
-	@echo "  help        - Show this help"
+	@echo "  build          - Build the application to bin/"
+	@echo "  run            - Run the application directly"
+	@echo "  clean          - Clean build artifacts"
+	@echo "  deps           - Download and tidy dependencies"
+	@echo "  test           - Run tests"
+	@echo "  install        - Install to user bin (GOBIN > GOPATH/bin > ~/.local/bin)"
+	@echo "  install-system - Install to /usr/local/bin (requires sudo)"
+	@echo "  build-all      - Build for all platforms"
+	@echo "  fmt            - Format code"
+	@echo "  lint           - Lint code"
+	@echo "  help           - Show this help"

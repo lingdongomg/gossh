@@ -66,18 +66,23 @@ func (m *Manager) Save() error {
 	return m.saveUnlocked()
 }
 
-// IsFirstRun returns true if no master password has been set
+// IsFirstRun returns true if the app has not been initialized yet
 func (m *Manager) IsFirstRun() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return !m.config.Settings.IsPasswordSet()
+	return !m.config.Settings.Initialized
 }
 
-// IsUnlocked returns true if the config has been unlocked
+// IsUnlocked returns true if the config has been unlocked or doesn't need unlock
 func (m *Manager) IsUnlocked() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.unlocked || !m.config.Settings.IsPasswordSet()
+	// If password protection is disabled, always unlocked
+	if !m.config.Settings.PasswordProtectionEnabled {
+		return true
+	}
+	// If password protection is enabled, check unlocked state
+	return m.unlocked
 }
 
 // SetupMasterPassword sets the master password for the first time
@@ -109,6 +114,45 @@ func (m *Manager) SetupMasterPassword(password string) error {
 
 	m.config.Settings.MasterPasswordHash = hash
 	m.config.Settings.EncryptionSalt = salt
+	m.config.Settings.PasswordProtectionEnabled = true
+	m.config.Settings.Initialized = true
+	m.cryptoService = cryptoService
+	m.unlocked = true
+
+	return m.saveUnlocked()
+}
+
+// SetupWithoutPassword initializes the app without password protection
+func (m *Manager) SetupWithoutPassword() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.config.Settings.Initialized {
+		return errors.New("already initialized")
+	}
+
+	// Generate salt for encryption (we still encrypt data, just auto-unlock)
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		return err
+	}
+
+	// Use machine-derived key for encryption when no password is set
+	// This provides better security than a fixed key
+	machineKey, err := crypto.DeriveKeyFromMachine()
+	if err != nil {
+		// Fallback to a less secure but functional approach
+		machineKey = []byte(crypto.GetMachineID())
+	}
+	
+	cryptoService, err := crypto.NewCryptoServiceWithKey(machineKey, salt)
+	if err != nil {
+		return err
+	}
+
+	m.config.Settings.EncryptionSalt = salt
+	m.config.Settings.PasswordProtectionEnabled = false
+	m.config.Settings.Initialized = true
 	m.cryptoService = cryptoService
 	m.unlocked = true
 
@@ -119,6 +163,11 @@ func (m *Manager) SetupMasterPassword(password string) error {
 func (m *Manager) Unlock(password string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// If password protection is disabled, auto-unlock
+	if !m.config.Settings.PasswordProtectionEnabled {
+		return m.autoUnlock()
+	}
 
 	if !m.config.Settings.IsPasswordSet() {
 		m.unlocked = true
@@ -160,6 +209,59 @@ func (m *Manager) Unlock(password string) error {
 		}
 	}
 
+	return nil
+}
+
+// autoUnlock unlocks without password (for password protection disabled mode)
+func (m *Manager) autoUnlock() error {
+	if m.config.Settings.EncryptionSalt == "" {
+		m.unlocked = true
+		return nil
+	}
+
+	// Use machine-derived key for decryption
+	machineKey, err := crypto.DeriveKeyFromMachine()
+	if err != nil {
+		// Fallback
+		machineKey = []byte(crypto.GetMachineID())
+	}
+	
+	cryptoService, err := crypto.NewCryptoServiceWithKey(machineKey, m.config.Settings.EncryptionSalt)
+	if err != nil {
+		return err
+	}
+
+	m.cryptoService = cryptoService
+	m.unlocked = true
+
+	// Decrypt all connection passwords
+	for i := range m.config.Connections {
+		conn := &m.config.Connections[i]
+		if conn.EncryptedPassword != "" {
+			decrypted, err := m.cryptoService.Decrypt(conn.EncryptedPassword)
+			if err == nil {
+				conn.Password = decrypted
+			}
+		}
+		if conn.EncryptedKeyPassphrase != "" {
+			decrypted, err := m.cryptoService.Decrypt(conn.EncryptedKeyPassphrase)
+			if err == nil {
+				conn.KeyPassword = decrypted
+			}
+		}
+	}
+
+	return nil
+}
+
+// AutoUnlockIfNeeded automatically unlocks if password protection is disabled
+func (m *Manager) AutoUnlockIfNeeded() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.config.Settings.PasswordProtectionEnabled && m.config.Settings.Initialized {
+		return m.autoUnlock()
+	}
 	return nil
 }
 
@@ -438,4 +540,146 @@ func (m *Manager) saveUnlocked() error {
 	}
 
 	return os.WriteFile(m.path, data, 0600)
+}
+
+// IsPasswordProtected returns true if password protection is enabled
+func (m *Manager) IsPasswordProtected() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Settings.PasswordProtectionEnabled
+}
+
+// EnablePassword enables password protection with the given password
+func (m *Manager) EnablePassword(password string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Generate new salt
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		return err
+	}
+
+	// Hash password
+	hash, err := crypto.HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	// Create crypto service with password
+	cryptoService, err := crypto.NewCryptoService(password, salt)
+	if err != nil {
+		return err
+	}
+
+	// Re-encrypt all connection passwords with new key
+	for i := range m.config.Connections {
+		conn := &m.config.Connections[i]
+		if conn.Password != "" {
+			encrypted, err := cryptoService.Encrypt(conn.Password)
+			if err != nil {
+				return err
+			}
+			conn.EncryptedPassword = encrypted
+		}
+		if conn.KeyPassword != "" {
+			encrypted, err := cryptoService.Encrypt(conn.KeyPassword)
+			if err != nil {
+				return err
+			}
+			conn.EncryptedKeyPassphrase = encrypted
+		}
+	}
+
+	m.config.Settings.MasterPasswordHash = hash
+	m.config.Settings.EncryptionSalt = salt
+	m.config.Settings.PasswordProtectionEnabled = true
+	m.cryptoService = cryptoService
+
+	return m.saveUnlocked()
+}
+
+// DisablePassword disables password protection (requires current password verification)
+func (m *Manager) DisablePassword(currentPassword string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Verify current password
+	if m.config.Settings.MasterPasswordHash != "" {
+		valid, err := crypto.VerifyPassword(currentPassword, m.config.Settings.MasterPasswordHash)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("invalid password")
+		}
+	}
+
+	// Generate new salt for machine-based encryption
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		return err
+	}
+
+	// Use machine-derived key for encryption
+	machineKey, err := crypto.DeriveKeyFromMachine()
+	if err != nil {
+		machineKey = []byte(crypto.GetMachineID())
+	}
+
+	cryptoService, err := crypto.NewCryptoServiceWithKey(machineKey, salt)
+	if err != nil {
+		return err
+	}
+
+	// Re-encrypt all connection passwords with machine key
+	for i := range m.config.Connections {
+		conn := &m.config.Connections[i]
+		if conn.Password != "" {
+			encrypted, err := cryptoService.Encrypt(conn.Password)
+			if err != nil {
+				return err
+			}
+			conn.EncryptedPassword = encrypted
+		}
+		if conn.KeyPassword != "" {
+			encrypted, err := cryptoService.Encrypt(conn.KeyPassword)
+			if err != nil {
+				return err
+			}
+			conn.EncryptedKeyPassphrase = encrypted
+		}
+	}
+
+	m.config.Settings.MasterPasswordHash = ""
+	m.config.Settings.EncryptionSalt = salt
+	m.config.Settings.PasswordProtectionEnabled = false
+	m.cryptoService = cryptoService
+
+	return m.saveUnlocked()
+}
+
+// GetLanguage returns the configured language
+func (m *Manager) GetLanguage() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.config.Settings.Language == "" {
+		return "en"
+	}
+	return m.config.Settings.Language
+}
+
+// SetLanguage sets the language setting
+func (m *Manager) SetLanguage(lang string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.Settings.Language = lang
+	return m.saveUnlocked()
+}
+
+// GetSettings returns a copy of current settings
+func (m *Manager) GetSettings() model.Settings {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Settings
 }

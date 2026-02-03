@@ -13,10 +13,20 @@ A TUI (Terminal User Interface) SSH connection manager built with Go and [Bubble
 - **Search** - Real-time search and filter connections
 - **Import/Export** - YAML-based backup and restore
 
-### Advanced Features (v2.0)
+### Advanced Features (v1.1)
 - **SFTP File Transfer** - Interactive SFTP shell for file operations
 - **Port Forwarding** - Local (-L) and remote (-R) port forwarding
 - **Batch Execution** - Execute commands on multiple servers simultaneously
+
+### New in v1.2
+- **SSH Host Key Verification** - Secure host key management with known_hosts support
+- **Enhanced Security** - Machine-derived encryption keys for no-password mode
+- **Startup Commands** - Execute commands automatically after SSH connection
+- **Connection Health Check** - Test connections with `t` key or `gossh check` command
+- **SSH Config Import** - Import connections from `~/.ssh/config`
+- **Settings Page** - Language switching (English/中文) and password management
+- **Internationalization** - Full i18n support with Chinese and English
+- **SFTP Improvements** - Working directory tracking with `cd` command and progress display
 
 ## Installation
 
@@ -25,7 +35,7 @@ A TUI (Terminal User Interface) SSH connection manager built with Go and [Bubble
 ```bash
 git clone https://github.com/yourusername/gossh.git
 cd gossh
-go build -o gossh .
+make build
 ```
 
 ### Using Go Install
@@ -72,6 +82,8 @@ Launch the interactive TUI:
 | `a` | Add new connection |
 | `e` | Edit selected connection |
 | `d` | Delete selected connection |
+| `t` | Test connection (v1.2) |
+| `s` | Settings (v1.2) |
 | `?` | Show help |
 | `q` | Quit |
 
@@ -94,6 +106,22 @@ gossh export [filename]
 
 # Import connections from file
 gossh import <filename>
+
+# Import from SSH config (v1.2)
+gossh import --ssh-config [path]
+```
+
+#### Connection Health Check (v1.2)
+
+```bash
+# Check all connections
+gossh check --all
+
+# Check specific connection
+gossh check --name=myserver
+
+# Check connections by group
+gossh check --group=Production
 ```
 
 #### SFTP Session
@@ -104,10 +132,10 @@ gossh sftp <connection-name>
 
 SFTP shell commands:
 - `ls [path]` - List directory contents
-- `cd <path>` - Change directory
+- `cd <path>` - Change directory (v1.2: with working directory tracking)
 - `pwd` - Print working directory
-- `get <remote> [local]` - Download file
-- `put <local> [remote]` - Upload file
+- `get <remote> [local]` - Download file (v1.2: with progress display)
+- `put <local> [remote]` - Upload file (v1.2: with progress display)
 - `mkdir <path>` - Create directory
 - `rm <path>` - Remove file
 - `rmdir <path>` - Remove directory recursively
@@ -168,8 +196,9 @@ Configuration is stored in YAML format:
 ## Security
 
 - **Master Password**: Required on first run, uses Argon2id key derivation
+- **Machine-based Encryption** (v1.2): No-password mode uses machine-derived keys (hostname + username + machine UUID)
 - **Encryption**: AES-256-GCM for storing sensitive data (passwords, key passphrases)
-- **Host Key Verification**: Uses system known_hosts (configurable)
+- **Host Key Verification** (v1.2): Known hosts management with fingerprint confirmation
 
 ## Dependencies
 

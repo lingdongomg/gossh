@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 
 	"golang.org/x/crypto/argon2"
@@ -41,6 +42,29 @@ func NewCryptoService(masterPassword, salt string) (*CryptoService, error) {
 	}
 
 	encryptor, err := NewEncryptor(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CryptoService{
+		encryptor: encryptor,
+		salt:      salt,
+	}, nil
+}
+
+// NewCryptoServiceWithKey creates a new crypto service with a pre-derived key
+func NewCryptoServiceWithKey(key []byte, salt string) (*CryptoService, error) {
+	// Ensure key is 32 bytes
+	var finalKey []byte
+	if len(key) == 32 {
+		finalKey = key
+	} else {
+		// Hash the key to get 32 bytes
+		hash := sha256.Sum256(key)
+		finalKey = hash[:]
+	}
+
+	encryptor, err := NewEncryptor(finalKey)
 	if err != nil {
 		return nil, err
 	}

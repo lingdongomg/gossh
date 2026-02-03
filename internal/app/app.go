@@ -14,13 +14,26 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 	"gossh/internal/config"
+	"gossh/internal/i18n"
 	"gossh/internal/model"
 	"gossh/internal/sftp"
 	"gossh/internal/ssh"
+	"gossh/internal/sshconfig"
 	"gossh/internal/ui"
 )
 
-const version = "2.0.0"
+// version is set at build time, defaults to dev
+var version = "dev"
+
+// SetVersion sets the application version (called from main)
+func SetVersion(v string) {
+	version = v
+}
+
+// GetVersion returns the current version
+func GetVersion() string {
+	return version
+}
 
 // Run starts the application
 func Run() error {
@@ -30,8 +43,15 @@ func Run() error {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 
+	// Load saved language setting
+	savedLang := cfg.GetLanguage()
+	if savedLang != "" {
+		i18n.SetLanguage(i18n.Language(savedLang))
+	}
+
 	// Create the app model
 	appModel := ui.NewModel(cfg)
+	appModel.SetVersion(version)
 
 	// Create and run the Bubbletea program
 	p := tea.NewProgram(appModel, tea.WithAltScreen())
@@ -73,6 +93,8 @@ func RunWithArgs(args []string) error {
 			return runForward(args[2:])
 		case "exec":
 			return runExec(args[2:])
+		case "check":
+			return runHealthCheck(args[2:])
 		}
 	}
 
@@ -90,8 +112,9 @@ Usage:
   gossh connect <name>               Connect to a server by name
   gossh export [file]                Export connections (default: connections.yaml)
   gossh import <file>                Import connections from file
+  gossh import --ssh-config [path]   Import from SSH config file
 
-Advanced Commands (v2.0):
+Advanced Commands (v1.2):
   gossh sftp <name>                  Start SFTP session with a server
   gossh forward <name> -L/-R <spec>  Port forwarding (-L local, -R remote)
   gossh exec <command> [options]     Execute command on multiple servers
@@ -99,6 +122,10 @@ Advanced Commands (v2.0):
     --tags=<tag1,tag2>               Filter by tags
     --names=<n1,n2>                  Filter by names
     --timeout=<seconds>              Command timeout (default: 30)
+  gossh check [options]              Health check connections
+    --all                            Check all connections
+    --group=<group>                  Check by group
+    --name=<name>                    Check specific connection
 
 Examples:
   gossh sftp prod-web-01
@@ -106,6 +133,8 @@ Examples:
   gossh forward prod-web -R 8080:localhost:80
   gossh exec "uptime" --group=Production
   gossh exec "df -h" --tags=web,nginx
+  gossh import --ssh-config
+  gossh check --all
 
 TUI Navigation:
   up/k               Move up
@@ -116,6 +145,8 @@ TUI Navigation:
   a                  Add new connection
   e                  Edit selected connection
   d                  Delete selected connection
+  s                  Settings
+  t                  Test connection
   ?                  Show help
   q                  Quit
 
@@ -175,7 +206,12 @@ func runExport(args []string) error {
 // runImport imports connections from a file
 func runImport(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gossh import <file>")
+		return fmt.Errorf("usage: gossh import <file> or gossh import --ssh-config [path]")
+	}
+
+	// Check if importing from SSH config
+	if args[0] == "--ssh-config" {
+		return runImportSSHConfig(args[1:])
 	}
 
 	filename := args[0]
@@ -205,7 +241,7 @@ func runImport(args []string) error {
 
 	fmt.Print("Overwrite existing connections with same name? [y/N]: ")
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer)
 	overwrite := answer == "y" || answer == "Y"
 
 	imported, err := cfg.ImportConnections(importData.Connections, overwrite)
@@ -214,6 +250,139 @@ func runImport(args []string) error {
 	}
 
 	fmt.Printf("Imported %d connections from %s\n", imported, filename)
+	return nil
+}
+
+// runImportSSHConfig imports connections from SSH config file
+func runImportSSHConfig(args []string) error {
+	parser := sshconfig.NewParser()
+
+	var connections []model.Connection
+	var err error
+
+	if len(args) > 0 {
+		connections, err = parser.ParseFile(args[0])
+	} else {
+		connections, err = parser.ParseDefault()
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to parse SSH config: %w", err)
+	}
+
+	if len(connections) == 0 {
+		fmt.Println("No connections found in SSH config.")
+		return nil
+	}
+
+	fmt.Printf("Found %d connections in SSH config.\n", len(connections))
+
+	cfg, err := config.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := unlockIfNeeded(cfg); err != nil {
+		return err
+	}
+
+	// Merge with existing connections
+	existing := cfg.Connections()
+	newConns, skipped := sshconfig.Merge(existing, connections)
+
+	if len(newConns) == 0 {
+		fmt.Printf("All %d connections already exist, nothing to import.\n", skipped)
+		return nil
+	}
+
+	fmt.Printf("Will import %d new connections (%d skipped as duplicates).\n", len(newConns), skipped)
+	fmt.Print("Proceed? [Y/n]: ")
+	var answer string
+	_, _ = fmt.Scanln(&answer)
+	if answer != "" && answer != "y" && answer != "Y" {
+		fmt.Println("Import cancelled.")
+		return nil
+	}
+
+	// Import the new connections
+	for _, conn := range newConns {
+		if err := cfg.AddConnection(conn); err != nil {
+			fmt.Printf("Warning: failed to add %s: %v\n", conn.Name, err)
+		}
+	}
+
+	fmt.Printf("Successfully imported %d connections.\n", len(newConns))
+	return nil
+}
+
+// runHealthCheck checks connection health
+func runHealthCheck(args []string) error {
+	cfg, err := config.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := unlockIfNeeded(cfg); err != nil {
+		return err
+	}
+
+	connections := cfg.Connections()
+	if len(connections) == 0 {
+		fmt.Println("No connections found.")
+		return nil
+	}
+
+	// Parse arguments
+	checkAll := false
+	groupFilter := ""
+	nameFilter := ""
+
+	for _, arg := range args {
+		if arg == "--all" {
+			checkAll = true
+		} else if strings.HasPrefix(arg, "--group=") {
+			groupFilter = strings.TrimPrefix(arg, "--group=")
+		} else if strings.HasPrefix(arg, "--name=") {
+			nameFilter = strings.TrimPrefix(arg, "--name=")
+		}
+	}
+
+	// If no filter specified, default to all
+	if !checkAll && groupFilter == "" && nameFilter == "" {
+		checkAll = true
+	}
+
+	// Filter connections
+	var toCheck []model.Connection
+	for _, conn := range connections {
+		if nameFilter != "" && conn.Name != nameFilter {
+			continue
+		}
+		if groupFilter != "" && conn.Group != groupFilter {
+			continue
+		}
+		toCheck = append(toCheck, conn)
+	}
+
+	if len(toCheck) == 0 {
+		fmt.Println("No connections match the filter.")
+		return nil
+	}
+
+	fmt.Printf("Checking %d connection(s)...\n\n", len(toCheck))
+
+	// Check each connection
+	for _, conn := range toCheck {
+		fmt.Printf("%-20s %s:%d ... ", conn.Name, conn.Host, conn.Port)
+		
+		err := ssh.QuickCheck(conn.Host, conn.Port, 5*time.Second)
+		if err != nil {
+			fmt.Printf("✗ %v\n", err)
+		} else {
+			fmt.Printf("✓ reachable\n")
+		}
+	}
+
 	return nil
 }
 
@@ -271,11 +440,11 @@ func runConnect(name string) error {
 	err = terminal.Run()
 
 	if err != nil {
-		cfg.UpdateConnectionStatus(conn.ID, model.ConnStatusFailed)
+		_ = cfg.UpdateConnectionStatus(conn.ID, model.ConnStatusFailed)
 		return fmt.Errorf("connection failed: %w", err)
 	}
 
-	cfg.UpdateConnectionStatus(conn.ID, model.ConnStatusSuccess)
+	_ = cfg.UpdateConnectionStatus(conn.ID, model.ConnStatusSuccess)
 	return nil
 }
 
@@ -533,7 +702,7 @@ func runExec(args []string) error {
 			names = strings.Split(strings.TrimPrefix(arg, "--names="), ",")
 		} else if strings.HasPrefix(arg, "--timeout=") {
 			var secs int
-			fmt.Sscanf(strings.TrimPrefix(arg, "--timeout="), "%d", &secs)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "--timeout="), "%d", &secs)
 			if secs > 0 {
 				timeout = time.Duration(secs) * time.Second
 			}
@@ -582,7 +751,7 @@ func runExec(args []string) error {
 	// Confirm execution
 	fmt.Print("Continue? [y/N]: ")
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer)
 	if answer != "y" && answer != "Y" {
 		fmt.Println("Aborted.")
 		return nil
@@ -604,7 +773,17 @@ func runExec(args []string) error {
 // Helper functions
 
 func unlockIfNeeded(cfg *config.Manager) error {
-	if !cfg.IsFirstRun() && !cfg.IsUnlocked() {
+	if cfg.IsFirstRun() {
+		return fmt.Errorf("first run: please use TUI mode to complete setup")
+	}
+
+	// Try auto-unlock first (for password protection disabled mode)
+	if err := cfg.AutoUnlockIfNeeded(); err != nil {
+		return err
+	}
+
+	// If still locked, prompt for password
+	if !cfg.IsUnlocked() {
 		password, err := readPassword("Enter master password: ")
 		if err != nil {
 			return err

@@ -143,7 +143,7 @@ func (b *BatchExecutor) executeOne(ctx context.Context, conn model.Connection, c
 			result.Error = err
 		}
 	case <-ctx.Done():
-		session.Signal(ssh.SIGTERM)
+		_ = session.Signal(ssh.SIGTERM)
 		result.Error = ctx.Err()
 	}
 

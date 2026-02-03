@@ -13,10 +13,20 @@
 - **搜索** - 实时搜索和过滤连接
 - **导入/导出** - 基于 YAML 的备份和恢复
 
-### 高级功能 (v2.0)
+### 高级功能 (v1.1)
 - **SFTP 文件传输** - 交互式 SFTP Shell，支持文件操作
 - **端口转发** - 本地转发 (-L) 和远程转发 (-R)
 - **批量执行** - 在多台服务器上同时执行命令
+
+### 新功能 (v1.2)
+- **SSH 主机密钥验证** - 安全的主机密钥管理，支持 known_hosts
+- **增强安全性** - 无密码模式使用机器特征派生密钥
+- **启动命令** - SSH 连接后自动执行命令
+- **连接健康检查** - 使用 `t` 键或 `gossh check` 命令测试连接
+- **SSH Config 导入** - 从 `~/.ssh/config` 导入连接
+- **设置页面** - 语言切换（English/中文）和密码管理
+- **国际化** - 完整的中英文 i18n 支持
+- **SFTP 改进** - `cd` 命令支持工作目录跟踪和进度显示
 
 ## 安装
 
@@ -25,7 +35,7 @@
 ```bash
 git clone https://github.com/yourusername/gossh.git
 cd gossh
-go build -o gossh .
+make build
 ```
 
 ### 使用 Go Install
@@ -72,6 +82,8 @@ go install github.com/yourusername/gossh@latest
 | `a` | 添加新连接 |
 | `e` | 编辑选中的连接 |
 | `d` | 删除选中的连接 |
+| `t` | 测试连接 (v1.2) |
+| `s` | 设置 (v1.2) |
 | `?` | 显示帮助 |
 | `q` | 退出 |
 
@@ -94,6 +106,22 @@ gossh export [filename]
 
 # 从文件导入连接
 gossh import <filename>
+
+# 从 SSH Config 导入 (v1.2)
+gossh import --ssh-config [路径]
+```
+
+#### 连接健康检查 (v1.2)
+
+```bash
+# 检查所有连接
+gossh check --all
+
+# 检查指定连接
+gossh check --name=myserver
+
+# 按分组检查
+gossh check --group=Production
 ```
 
 #### SFTP 会话
@@ -104,10 +132,10 @@ gossh sftp <连接名称>
 
 SFTP Shell 命令：
 - `ls [路径]` - 列出目录内容
-- `cd <路径>` - 切换目录
+- `cd <路径>` - 切换目录 (v1.2: 支持工作目录跟踪)
 - `pwd` - 显示当前工作目录
-- `get <远程> [本地]` - 下载文件
-- `put <本地> [远程]` - 上传文件
+- `get <远程> [本地]` - 下载文件 (v1.2: 带进度显示)
+- `put <本地> [远程]` - 上传文件 (v1.2: 带进度显示)
 - `mkdir <路径>` - 创建目录
 - `rm <路径>` - 删除文件
 - `rmdir <路径>` - 递归删除目录
@@ -168,8 +196,9 @@ gossh exec "long-running-command" --group=All --timeout=120
 ## 安全性
 
 - **主密码**：首次运行时设置，使用 Argon2id 密钥派生
+- **机器特征加密** (v1.2)：无密码模式使用机器派生密钥（主机名 + 用户名 + 机器 UUID）
 - **加密**：使用 AES-256-GCM 存储敏感数据（密码、密钥密码）
-- **主机密钥验证**：使用系统 known_hosts（可配置）
+- **主机密钥验证** (v1.2)：支持 known_hosts 管理和指纹确认
 
 ## 依赖
 

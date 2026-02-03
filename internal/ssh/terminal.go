@@ -6,23 +6,41 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
+	"syscall"
+	"time"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 	"gossh/internal/model"
 )
 
 // Terminal handles interactive SSH terminal sessions
 type Terminal struct {
-	conn   model.Connection
-	client *Client
+	conn            model.Connection
+	client          *Client
+	startupTimeout  time.Duration
+	hostKeyCallback ssh.HostKeyCallback
 }
 
 // NewTerminal creates a new terminal for a connection
 func NewTerminal(conn model.Connection) *Terminal {
 	return &Terminal{
-		conn:   conn,
-		client: NewClient(conn),
+		conn:           conn,
+		client:         NewClient(conn),
+		startupTimeout: 5 * time.Second,
 	}
+}
+
+// SetHostKeyCallback sets the host key callback for verification
+func (t *Terminal) SetHostKeyCallback(callback ssh.HostKeyCallback) {
+	t.hostKeyCallback = callback
+	t.client.SetHostKeyCallback(callback)
+}
+
+// SetStartupTimeout sets the timeout for startup command execution
+func (t *Terminal) SetStartupTimeout(timeout time.Duration) {
+	t.startupTimeout = timeout
 }
 
 // Run starts an interactive terminal session
@@ -66,7 +84,7 @@ func (t *Terminal) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to set raw mode: %w", err)
 	}
-	defer term.Restore(fd, oldState)
+	defer func() { _ = term.Restore(fd, oldState) }()
 
 	// Connect stdin/stdout/stderr
 	session.SetStdin(os.Stdin)
@@ -76,13 +94,14 @@ func (t *Terminal) Run() error {
 	// Handle window resize (only on Unix-like systems)
 	if runtime.GOOS != "windows" {
 		sigwinch := make(chan os.Signal, 1)
-		signal.Notify(sigwinch, os.Interrupt) // Fallback signal
+		// Use SIGWINCH for window resize signal
+		signal.Notify(sigwinch, syscall.SIGWINCH)
 		defer signal.Stop(sigwinch)
 
 		go func() {
 			for range sigwinch {
 				if w, h, err := term.GetSize(fd); err == nil {
-					session.WindowChange(h, w)
+					_ = session.WindowChange(h, w)
 				}
 			}
 		}()
@@ -93,8 +112,31 @@ func (t *Terminal) Run() error {
 		return fmt.Errorf("failed to start shell: %w", err)
 	}
 
+	// Execute startup command if configured
+	if t.conn.StartupCommand != "" {
+		go t.executeStartupCommand(session)
+	}
+
 	// Wait for session to end
 	return session.Wait()
+}
+
+// executeStartupCommand sends the startup command to the shell
+func (t *Terminal) executeStartupCommand(session *Session) {
+	// Wait a moment for the shell to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Send the command followed by newline
+	cmd := strings.TrimSpace(t.conn.StartupCommand)
+	if cmd != "" {
+		// Write the command to stdin via the session
+		// Note: This writes through the PTY which simulates user input
+		stdinPipe, err := session.StdinPipe()
+		if err != nil {
+			return
+		}
+		_, _ = stdinPipe.Write([]byte(cmd + "\n"))
+	}
 }
 
 // RunWithIO runs an interactive session with custom IO
@@ -124,6 +166,11 @@ func (t *Terminal) RunWithIO(stdin io.Reader, stdout, stderr io.Writer, width, h
 
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("failed to start shell: %w", err)
+	}
+
+	// Execute startup command if configured
+	if t.conn.StartupCommand != "" {
+		go t.executeStartupCommand(session)
 	}
 
 	return session.Wait()

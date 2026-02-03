@@ -15,8 +15,9 @@ const (
 
 // Client wraps an SSH client connection
 type Client struct {
-	conn   model.Connection
-	client *ssh.Client
+	conn            model.Connection
+	client          *ssh.Client
+	hostKeyCallback ssh.HostKeyCallback
 }
 
 // NewClient creates a new SSH client for a connection
@@ -24,26 +25,17 @@ func NewClient(conn model.Connection) *Client {
 	return &Client{conn: conn}
 }
 
-// Connect establishes the SSH connection
+// SetHostKeyCallback sets the host key callback for verification
+func (c *Client) SetHostKeyCallback(callback ssh.HostKeyCallback) {
+	c.hostKeyCallback = callback
+}
+
+// Connect establishes the SSH connection using the factory function
 func (c *Client) Connect() error {
-	authMethods, err := BuildAuthMethods(c.conn)
+	client, err := ConnectWithConnection(c.conn, c.hostKeyCallback)
 	if err != nil {
-		return fmt.Errorf("failed to build auth methods: %w", err)
+		return err
 	}
-
-	config := &ssh.ClientConfig{
-		User:            c.conn.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: implement known_hosts
-		Timeout:         defaultTimeout,
-	}
-
-	addr := fmt.Sprintf("%s:%d", c.conn.Host, c.conn.Port)
-	client, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return fmt.Errorf("failed to dial: %w", err)
-	}
-
 	c.client = client
 	return nil
 }

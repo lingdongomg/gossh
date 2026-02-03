@@ -417,7 +417,8 @@ func (m FormModel) View() string {
 			label = styles.SelectedStyle.Render(f.label + ":")
 		}
 
-		if f.field == FieldAuthMethod {
+		switch f.field {
+		case FieldAuthMethod:
 			// Show as toggle
 			authDisplay := "[password] / key"
 			if m.authMethod == model.AuthKey {
@@ -431,7 +432,7 @@ func (m FormModel) View() string {
 				b.WriteString(" " + styles.DimStyle.Render(f.note))
 			}
 			b.WriteString("\n")
-		} else if f.field == FieldGroup {
+		case FieldGroup:
 			// Show as selector
 			groupDisplay := "[" + m.inputs[FieldGroup].Value() + "]"
 			if m.focusIndex == int(FieldGroup) {
@@ -442,7 +443,7 @@ func (m FormModel) View() string {
 				b.WriteString(" " + styles.DimStyle.Render(f.note))
 			}
 			b.WriteString("\n")
-		} else {
+		default:
 			b.WriteString(label + " " + m.inputs[f.field].View())
 			if f.note != "" {
 				b.WriteString(" " + styles.DimStyle.Render(f.note))
