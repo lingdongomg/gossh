@@ -33,7 +33,7 @@
 ### 从源码编译
 
 ```bash
-git clone https://github.com/yourusername/gossh.git
+git clone https://github.com/lingdongomg/gossh.git
 cd gossh
 make build
 ```
@@ -41,7 +41,7 @@ make build
 ### 使用 Go Install
 
 ```bash
-go install github.com/yourusername/gossh@latest
+go install github.com/lingdongomg/gossh@latest
 ```
 
 ## 快速开始

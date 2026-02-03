@@ -33,7 +33,7 @@ A TUI (Terminal User Interface) SSH connection manager built with Go and [Bubble
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/gossh.git
+git clone https://github.com/lingdongomg/gossh.git
 cd gossh
 make build
 ```
@@ -41,7 +41,7 @@ make build
 ### Using Go Install
 
 ```bash
-go install github.com/yourusername/gossh@latest
+go install github.com/lingdongomg/gossh@latest
 ```
 
 ## Quick Start
