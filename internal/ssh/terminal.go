@@ -4,10 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -91,21 +88,9 @@ func (t *Terminal) Run() error {
 	session.SetStdout(os.Stdout)
 	session.SetStderr(os.Stderr)
 
-	// Handle window resize (only on Unix-like systems)
-	if runtime.GOOS != "windows" {
-		sigwinch := make(chan os.Signal, 1)
-		// Use SIGWINCH for window resize signal
-		signal.Notify(sigwinch, syscall.SIGWINCH)
-		defer signal.Stop(sigwinch)
-
-		go func() {
-			for range sigwinch {
-				if w, h, err := term.GetSize(fd); err == nil {
-					_ = session.WindowChange(h, w)
-				}
-			}
-		}()
-	}
+	// Handle window resize (platform-specific)
+	cleanup := setupWindowResize(session, fd)
+	defer cleanup()
 
 	// Start shell
 	if err := session.Shell(); err != nil {
