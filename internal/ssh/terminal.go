@@ -97,13 +97,27 @@ func (t *Terminal) Run() error {
 		return fmt.Errorf("failed to start shell: %w", err)
 	}
 
+	// Start keepalive to detect dead connections
+	ka := NewKeepalive(t.client.Conn())
+	ka.Start()
+	defer ka.Stop()
+
 	// Execute startup command if configured
 	if t.conn.StartupCommand != "" {
 		go t.executeStartupCommand(session)
 	}
 
 	// Wait for session to end
-	return session.Wait()
+	waitErr := session.Wait()
+
+	// Ensure cursor moves to a new line after session ends
+	_, _ = os.Stdout.Write([]byte("\r\n"))
+
+	// If keepalive detected a dead connection, report that instead
+	if deadErr := ka.DeadError(); deadErr != nil {
+		return fmt.Errorf("connection lost: %w", deadErr)
+	}
+	return waitErr
 }
 
 // executeStartupCommand sends the startup command to the shell
@@ -153,12 +167,25 @@ func (t *Terminal) RunWithIO(stdin io.Reader, stdout, stderr io.Writer, width, h
 		return fmt.Errorf("failed to start shell: %w", err)
 	}
 
+	// Start keepalive to detect dead connections
+	ka := NewKeepalive(t.client.Conn())
+	ka.Start()
+	defer ka.Stop()
+
 	// Execute startup command if configured
 	if t.conn.StartupCommand != "" {
 		go t.executeStartupCommand(session)
 	}
 
-	return session.Wait()
+	waitErr := session.Wait()
+
+	// Write newline to ensure clean output after session ends
+	_, _ = stdout.Write([]byte("\r\n"))
+
+	if deadErr := ka.DeadError(); deadErr != nil {
+		return fmt.Errorf("connection lost: %w", deadErr)
+	}
+	return waitErr
 }
 
 // Close closes the terminal connection

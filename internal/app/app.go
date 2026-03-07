@@ -127,14 +127,34 @@ Advanced Commands (v1.2):
     --group=<group>                  Check by group
     --name=<name>                    Check specific connection
 
+Port Forwarding:
+  gossh forward <name> -L <local-port>:<remote-host>:<remote-port>
+  gossh forward <name> -R <remote-port>:<local-host>:<local-port>
+
+  -L (Local Forward): Map remote port to local
+    Listens on <local-port> on your machine, traffic is forwarded through the
+    SSH server to <remote-host>:<remote-port>.
+    Use "localhost" as <remote-host> to access the server's own port.
+
+  -R (Remote Forward): Map local port to remote
+    Listens on <remote-port> on the SSH server, traffic is forwarded back to
+    <local-host>:<local-port> on your machine.
+    Use "localhost" as <local-host> to expose your machine's own port.
+
 Examples:
   gossh sftp prod-web-01
-  gossh forward prod-db -L 3306:localhost:3306
-  gossh forward prod-web -R 8080:localhost:80
   gossh exec "uptime" --group=Production
   gossh exec "df -h" --tags=web,nginx
   gossh import --ssh-config
   gossh check --all
+
+  # Access remote server's MySQL (port 3306) from local port 3306
+  #   local:3306 -> [server] -> 3306
+  gossh forward <name> -L 3306:localhost:3306
+
+  # Expose local web service (port 80) as port 8080 on remote server
+  #   [server]:8080 -> local:80
+  gossh forward <name> -R 8080:localhost:80
 
 TUI Navigation:
   up/k               Move up
@@ -441,6 +461,10 @@ func runConnect(name string) error {
 
 	if err != nil {
 		_ = cfg.UpdateConnectionStatus(conn.ID, model.ConnStatusFailed)
+		// Avoid double-wrapping "connection lost" errors
+		if strings.Contains(err.Error(), "connection lost") {
+			return err
+		}
 		return fmt.Errorf("connection failed: %w", err)
 	}
 

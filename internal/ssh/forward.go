@@ -31,12 +31,15 @@ type PortForward struct {
 }
 
 // ParsePortForward parses a port forward string like "8080:localhost:80"
+// For -L: spec is <local-port>:<remote-host>:<remote-port>
+// For -R: spec is <remote-port>:<local-host>:<local-port>
 func ParsePortForward(fwdType ForwardType, spec string) (*PortForward, error) {
-	var localHost, remoteHost string
-	var localPort, remotePort int
-
 	// Parse spec: [bind_address:]port:host:hostport
 	parts := strings.Split(spec, ":")
+
+	var bindHost string
+	var port1, port2 int
+
 	switch len(parts) {
 	case 3:
 		// port:host:hostport
@@ -48,10 +51,9 @@ func ParsePortForward(fwdType ForwardType, spec string) (*PortForward, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[2])
 		}
-		localHost = "localhost"
-		localPort = p1
-		remoteHost = parts[1]
-		remotePort = p2
+		bindHost = parts[1]
+		port1 = p1
+		port2 = p2
 	case 4:
 		// bind_address:port:host:hostport
 		p1, err := strconv.Atoi(parts[1])
@@ -62,21 +64,35 @@ func ParsePortForward(fwdType ForwardType, spec string) (*PortForward, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[3])
 		}
-		localHost = parts[0]
-		localPort = p1
-		remoteHost = parts[2]
-		remotePort = p2
+		bindHost = parts[2]
+		port1 = p1
+		port2 = p2
 	default:
 		return nil, fmt.Errorf("invalid forward spec: %s (expected [bind:]port:host:port)", spec)
 	}
 
-	return &PortForward{
-		Type:       fwdType,
-		LocalHost:  localHost,
-		LocalPort:  localPort,
-		RemoteHost: remoteHost,
-		RemotePort: remotePort,
-	}, nil
+	pf := &PortForward{Type: fwdType}
+	if fwdType == ForwardLocal {
+		// -L local_port:remote_host:remote_port
+		pf.LocalHost = "localhost"
+		pf.LocalPort = port1
+		pf.RemoteHost = bindHost
+		pf.RemotePort = port2
+		if len(parts) == 4 {
+			pf.LocalHost = parts[0]
+		}
+	} else {
+		// -R remote_port:local_host:local_port
+		pf.RemoteHost = "localhost"
+		pf.RemotePort = port1
+		pf.LocalHost = bindHost
+		pf.LocalPort = port2
+		if len(parts) == 4 {
+			pf.RemoteHost = parts[0]
+		}
+	}
+
+	return pf, nil
 }
 
 // String returns a string representation
@@ -206,7 +222,7 @@ func (f *Forwarder) startLocalForward(pf *PortForward) error {
 		}
 	}()
 
-	fmt.Printf("Local forward: %s -> %s:%d\n", localAddr, pf.RemoteHost, pf.RemotePort)
+	fmt.Printf("Local forward: %s -> [%s] -> %s:%d\n", localAddr, f.conn.Host, pf.RemoteHost, pf.RemotePort)
 	return nil
 }
 
@@ -257,7 +273,7 @@ func (f *Forwarder) startRemoteForward(pf *PortForward) error {
 		}
 	}()
 
-	fmt.Printf("Remote forward: %s -> %s:%d\n", remoteAddr, pf.LocalHost, pf.LocalPort)
+	fmt.Printf("Remote forward: [%s] %s -> %s:%d\n", f.conn.Host, remoteAddr, pf.LocalHost, pf.LocalPort)
 	return nil
 }
 

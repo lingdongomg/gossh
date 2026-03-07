@@ -144,12 +144,23 @@ SFTP shell commands:
 #### Port Forwarding
 
 ```bash
-# Local port forwarding (-L)
-# Forward local port 3306 to remote localhost:3306
+# Syntax:
+#   -L <local-port>:<remote-host>:<remote-port>   Map remote port to local
+#   -R <remote-port>:<local-host>:<local-port>     Map local port to remote
+
+# -L: Listens on <local-port> on your machine, forwards traffic through
+#     the SSH server to <remote-host>:<remote-port>.
+# -R: Listens on <remote-port> on the SSH server, forwards traffic back
+#     to <local-host>:<local-port> on your machine.
+# "localhost" in <remote-host> means the server itself,
+# "localhost" in <local-host> means your own machine.
+
+# Access remote server's MySQL (port 3306) from local port 3306
+#   local:3306 -> [server] -> 3306
 gossh forward <name> -L 3306:localhost:3306
 
-# Remote port forwarding (-R)
-# Forward remote port 8080 to local localhost:80
+# Expose local web service (port 80) as port 8080 on remote server
+#   [server]:8080 -> local:80
 gossh forward <name> -R 8080:localhost:80
 ```
 

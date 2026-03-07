@@ -40,6 +40,14 @@ func (c *Client) Connect() error {
 	return nil
 }
 
+// Conn returns the underlying ssh.Conn for the connection
+func (c *Client) Conn() ssh.Conn {
+	if c.client != nil {
+		return c.client.Conn
+	}
+	return nil
+}
+
 // Close closes the SSH connection
 func (c *Client) Close() error {
 	if c.client != nil {
