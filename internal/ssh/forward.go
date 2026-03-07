@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -34,14 +36,38 @@ func ParsePortForward(fwdType ForwardType, spec string) (*PortForward, error) {
 	var localPort, remotePort int
 
 	// Parse spec: [bind_address:]port:host:hostport
-	n, err := fmt.Sscanf(spec, "%d:%s:%d", &localPort, &remoteHost, &remotePort)
-	if n == 3 && err == nil {
-		localHost = "localhost"
-	} else {
-		n, err = fmt.Sscanf(spec, "%s:%d:%s:%d", &localHost, &localPort, &remoteHost, &remotePort)
-		if n != 4 || err != nil {
-			return nil, fmt.Errorf("invalid forward spec: %s (expected [bind:]port:host:port)", spec)
+	parts := strings.Split(spec, ":")
+	switch len(parts) {
+	case 3:
+		// port:host:hostport
+		p1, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[0])
 		}
+		p2, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[2])
+		}
+		localHost = "localhost"
+		localPort = p1
+		remoteHost = parts[1]
+		remotePort = p2
+	case 4:
+		// bind_address:port:host:hostport
+		p1, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[1])
+		}
+		p2, err := strconv.Atoi(parts[3])
+		if err != nil {
+			return nil, fmt.Errorf("invalid forward spec: %s (invalid port: %s)", spec, parts[3])
+		}
+		localHost = parts[0]
+		localPort = p1
+		remoteHost = parts[2]
+		remotePort = p2
+	default:
+		return nil, fmt.Errorf("invalid forward spec: %s (expected [bind:]port:host:port)", spec)
 	}
 
 	return &PortForward{
