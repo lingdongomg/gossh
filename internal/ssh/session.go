@@ -70,3 +70,8 @@ func (s *Session) SetStdout(w io.Writer) {
 func (s *Session) SetStderr(w io.Writer) {
 	s.session.Stderr = w
 }
+
+// Setenv sets an environment variable on the remote session
+func (s *Session) Setenv(name, value string) error {
+	return s.session.Setenv(name, value)
+}

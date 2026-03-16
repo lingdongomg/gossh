@@ -76,6 +76,9 @@ func (t *Terminal) Run() error {
 		return fmt.Errorf("failed to request pty: %w", err)
 	}
 
+	// Forward locale environment variables for proper CJK wide-char display
+	forwardLocaleEnv(session)
+
 	// Set raw mode
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -84,7 +87,27 @@ func (t *Terminal) Run() error {
 	defer func() { _ = term.Restore(fd, oldState) }()
 
 	// Connect stdin/stdout/stderr
-	session.SetStdin(os.Stdin)
+	// When a startup command is configured, use io.Pipe as intermediary
+	// so we can inject the command before forwarding os.Stdin.
+	// Note: session.StdinPipe() cannot be used after session.Stdin is set
+	// or after Shell() is called, so we must use this pipe approach.
+	if t.conn.StartupCommand != "" {
+		pr, pw := io.Pipe()
+		session.SetStdin(pr)
+		go func() {
+			// Wait for shell to initialize
+			time.Sleep(500 * time.Millisecond)
+			cmd := strings.TrimSpace(t.conn.StartupCommand)
+			if cmd != "" {
+				_, _ = pw.Write([]byte(cmd + "\n"))
+			}
+			// Forward remaining stdin from user
+			_, _ = io.Copy(pw, os.Stdin)
+			_ = pw.Close()
+		}()
+	} else {
+		session.SetStdin(os.Stdin)
+	}
 	session.SetStdout(os.Stdout)
 	session.SetStderr(os.Stderr)
 
@@ -102,11 +125,6 @@ func (t *Terminal) Run() error {
 	ka.Start()
 	defer ka.Stop()
 
-	// Execute startup command if configured
-	if t.conn.StartupCommand != "" {
-		go t.executeStartupCommand(session)
-	}
-
 	// Wait for session to end
 	waitErr := session.Wait()
 
@@ -118,24 +136,6 @@ func (t *Terminal) Run() error {
 		return fmt.Errorf("connection lost: %w", deadErr)
 	}
 	return waitErr
-}
-
-// executeStartupCommand sends the startup command to the shell
-func (t *Terminal) executeStartupCommand(session *Session) {
-	// Wait a moment for the shell to initialize
-	time.Sleep(500 * time.Millisecond)
-
-	// Send the command followed by newline
-	cmd := strings.TrimSpace(t.conn.StartupCommand)
-	if cmd != "" {
-		// Write the command to stdin via the session
-		// Note: This writes through the PTY which simulates user input
-		stdinPipe, err := session.StdinPipe()
-		if err != nil {
-			return
-		}
-		_, _ = stdinPipe.Write([]byte(cmd + "\n"))
-	}
 }
 
 // RunWithIO runs an interactive session with custom IO
@@ -159,7 +159,25 @@ func (t *Terminal) RunWithIO(stdin io.Reader, stdout, stderr io.Writer, width, h
 		return fmt.Errorf("failed to request pty: %w", err)
 	}
 
-	session.SetStdin(stdin)
+	// Forward locale environment variables for proper CJK wide-char display
+	forwardLocaleEnv(session)
+
+	// When a startup command is configured, use io.Pipe to inject the command
+	if t.conn.StartupCommand != "" {
+		pr, pw := io.Pipe()
+		session.SetStdin(pr)
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			cmd := strings.TrimSpace(t.conn.StartupCommand)
+			if cmd != "" {
+				_, _ = pw.Write([]byte(cmd + "\n"))
+			}
+			_, _ = io.Copy(pw, stdin)
+			_ = pw.Close()
+		}()
+	} else {
+		session.SetStdin(stdin)
+	}
 	session.SetStdout(stdout)
 	session.SetStderr(stderr)
 
@@ -172,11 +190,6 @@ func (t *Terminal) RunWithIO(stdin io.Reader, stdout, stderr io.Writer, width, h
 	ka.Start()
 	defer ka.Stop()
 
-	// Execute startup command if configured
-	if t.conn.StartupCommand != "" {
-		go t.executeStartupCommand(session)
-	}
-
 	waitErr := session.Wait()
 
 	// Write newline to ensure clean output after session ends
@@ -186,6 +199,18 @@ func (t *Terminal) RunWithIO(stdin io.Reader, stdout, stderr io.Writer, width, h
 		return fmt.Errorf("connection lost: %w", deadErr)
 	}
 	return waitErr
+}
+
+// forwardLocaleEnv forwards locale environment variables to the remote session.
+// This ensures proper CJK wide-character display by letting the remote shell
+// know the client's locale. Errors are silently ignored since not all SSH
+// servers accept environment variables (matching OpenSSH client behavior).
+func forwardLocaleEnv(session *Session) {
+	for _, name := range []string{"LANG", "LC_CTYPE", "LC_ALL"} {
+		if value := os.Getenv(name); value != "" {
+			_ = session.Setenv(name, value)
+		}
+	}
 }
 
 // Close closes the terminal connection
